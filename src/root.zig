@@ -1,18 +1,43 @@
 const std = @import("std");
 const fun = @import("funnel");
 
+/// Scribe errors
+pub const ScribeErrors = error{
+    /// The scribe has been closed.
+    closed,
+};
+
+/// Scribe errors for C API.
+pub const ScribeErrorsEnum = enum(c_int) {
+    /// Success.
+    SCRIBE_SUCCESS,
+    /// Scribe was closed.
+    SCRIBE_CLOSED,
+    /// Generic Error.
+    SCRIBE_ERROR,
+};
+
+/// Edit event operations.
 pub const EditEvent = enum(u8) {
+    /// ADD operation.
     ADD,
+    /// DELETE operation.
     DELETE,
 };
 
+/// Edit information for an edit operation.
 pub const Edit = extern struct {
+    /// The edit operation.
     event: EditEvent,
+    /// The row location.
     row: usize,
+    /// The col location.
     col: usize,
+    /// The character (If ADD operation).
     character: u32,
 };
 
+/// Marshaller for the Edit structure.
 export fn edit_marshal(e: *anyopaque, buf: [*]u8, len: usize) c_int {
     const edit_local: *Edit = @alignCast(@ptrCast(e));
     const buf_size = edit_size();
@@ -29,6 +54,7 @@ export fn edit_marshal(e: *anyopaque, buf: [*]u8, len: usize) c_int {
     return @intCast(offset);
 }
 
+/// Unmarshaller for the Edit structure.
 export fn edit_unmarshal(buf: [*]const u8) ?*anyopaque {
     var result = std.heap.c_allocator.create(Edit) catch {
         return null;
@@ -44,28 +70,42 @@ export fn edit_unmarshal(buf: [*]const u8) ?*anyopaque {
     return result;
 }
 
+/// Size function for the Edit structure.
 export fn edit_size() usize {
     return (@sizeOf(usize) * 2) + @sizeOf(u32) + 1;
 }
 
+/// Write at function signature for a ScribeWriter.
 pub const scribe_write_at_fn = fn (*anyopaque, u32, usize, usize) callconv(.C) c_int;
+/// Delete at function signature for a ScribeWriter.
 pub const scribe_delete_at_fn = fn (*anyopaque, usize, usize) callconv(.C) c_int;
 
+/// ScribeWriter interface for a Scribe to use when pushing out edit operations.
 pub const ScribeWriter = extern struct {
+    /// Internal object.
     ptr: *anyopaque,
+    /// Write at function.
     write_at: scribe_write_at_fn,
+    /// Delete at function.
     delete_at: scribe_delete_at_fn,
 };
 
+/// Scribe structure to handle funneling Edit operations out to a single ScribeWriter target.
 pub const Scribe = struct {
+    /// The scribe writer.
     writer: ScribeWriter = undefined,
+    /// thread for read operations.
     thread: std.Thread = undefined,
     //mutex: std.Thread.Mutex = undefined,
     //condition: std.Thread.Condition = undefined,
+    /// Funnel structure to pipe writes from multiple locations to a single read point.
     fun: fun.Funnel = undefined,
+    /// allocator
     alloc: std.mem.Allocator = undefined,
+    /// flag to signal the scribe is closed or not.
     closed: bool = false,
 
+    /// Initialize a scribe with a given writer.
     pub fn init(alloc: std.mem.Allocator, writer: ScribeWriter) Scribe {
         const marshaller = fun.EventMarshaller{
             .marshal = &edit_marshal,
@@ -85,7 +125,28 @@ pub const Scribe = struct {
         return result;
     }
 
-    pub fn apply_change(self: *Scribe, e: Edit) void {
+    /// Initialize an allocated scribe with a given writer.
+    pub fn alloc_init(alloc: std.mem.Allocator, writer: ScribeWriter) !*Scribe {
+        var result = try alloc.create(Scribe);
+        const marshaller = fun.EventMarshaller{
+            .marshal = &edit_marshal,
+            .unmarshal = &edit_unmarshal,
+            .size = &edit_size,
+        };
+        result.writer = writer;
+        result.fun = fun.Funnel.init(alloc, marshaller);
+        result.alloc = alloc;
+        result.thread = std.Thread.spawn(
+            .{},
+            result.handle_events,
+            .{&result},
+        );
+        return result;
+    }
+
+    /// Apply incoming edit operations to the internal scribe writer.
+    fn apply_change(self: *Scribe, e: Edit) ScribeErrors!void {
+        if (self.closed) return ScribeErrors.closed;
         switch (e.event) {
             EditEvent.ADD => {
                 if (self.writer.write_at(
@@ -105,6 +166,7 @@ pub const Scribe = struct {
         }
     }
 
+    /// Handle reading edit operations from the funnel structure.
     fn handle_events(s: *Scribe) void {
         const funnel_handler = struct {
             fn cb(ptr: *anyopaque) void {
@@ -124,7 +186,9 @@ pub const Scribe = struct {
         }
     }
 
-    pub fn write(self: *Scribe, event: Edit) void {
+    /// Write an Edit operation to the scribe.
+    pub fn write(self: *Scribe, event: Edit) ScribeErrors!void {
+        if (self.closed) return ScribeErrors.closed;
         var len: usize = 0;
         var retries: usize = 0;
         while (len == 0) {
@@ -140,7 +204,47 @@ pub const Scribe = struct {
                 }
             };
             retries += 1;
+            // TODO maybe there's a more efficient way to spin
             std.time.sleep(std.time.ns_per_us * 200);
         }
     }
+
+    /// Deinitialize internals and toggle closed flag to true.
+    pub fn deinit(self: *Scribe) void {
+        self.closed = true;
+        self.thread.join();
+        self.fun.deinit();
+    }
 };
+
+/// Scribe structure for C ABI.
+pub const scribe_t = extern struct {
+    __internal: *anyopaque,
+};
+
+/// Initialize a scribe for the C ABI.
+export fn scribe_init(s: *scribe_t, writer: ScribeWriter) bool {
+    const result = Scribe.alloc_init(std.heap.c_allocator, writer) catch {
+        return false;
+    };
+    s.__internal = result;
+    return true;
+}
+
+/// Write Edit operations to a scribe for the C ABI.
+export fn scribe_write(s: *scribe_t, e: Edit) ScribeErrorsEnum {
+    var local: *Scribe = @alignCast(@ptrCast(s.__internal));
+    local.write(e) catch |err| {
+        if (err == ScribeErrors.closed) {
+            return ScribeErrorsEnum.SCRIBE_CLOSED;
+        }
+        return ScribeErrorsEnum.SCRIBE_ERROR;
+    };
+    return ScribeErrorsEnum.SCRIBE_SUCCESS;
+}
+
+/// Free a scribe for the C ABI.
+export fn scribe_free(s: *scribe_t) void {
+    var local: *Scribe = @alignCast(@ptrCast(s.__internal));
+    local.deinit();
+}
