@@ -76,18 +76,18 @@ export fn edit_size() usize {
 }
 
 /// Write at function signature for a ScribeWriter.
-pub const scribe_write_at_fn = fn (*anyopaque, u32, usize, usize) callconv(.C) c_int;
+pub const scribe_write_at_fn = fn (?*anyopaque, u32, usize, usize) callconv(.C) c_int;
 /// Delete at function signature for a ScribeWriter.
-pub const scribe_delete_at_fn = fn (*anyopaque, usize, usize) callconv(.C) c_int;
+pub const scribe_delete_at_fn = fn (?*anyopaque, usize, usize) callconv(.C) c_int;
 
 /// ScribeWriter interface for a Scribe to use when pushing out edit operations.
 pub const ScribeWriter = extern struct {
     /// Internal object.
-    ptr: *anyopaque,
+    ptr: ?*anyopaque,
     /// Write at function.
-    write_at: scribe_write_at_fn,
+    write_at: ?*const scribe_write_at_fn,
     /// Delete at function.
-    delete_at: scribe_delete_at_fn,
+    delete_at: ?*const scribe_delete_at_fn,
 };
 
 /// Scribe structure to handle funneling Edit operations out to a single ScribeWriter target.
@@ -106,18 +106,18 @@ pub const Scribe = struct {
     closed: bool = false,
 
     /// Initialize a scribe with a given writer.
-    pub fn init(alloc: std.mem.Allocator, writer: ScribeWriter) Scribe {
+    pub fn init(alloc: std.mem.Allocator, writer: ScribeWriter) !Scribe {
         const marshaller = fun.EventMarshaller{
-            .marshal = &edit_marshal,
-            .unmarshal = &edit_unmarshal,
-            .size = &edit_size,
+            .marshal = edit_marshal,
+            .unmarshal = edit_unmarshal,
+            .size = edit_size,
         };
         const result = Scribe{
             .writer = writer,
-            .fun = fun.Funnel.init(alloc, marshaller),
+            .fun = try fun.Funnel.init(alloc, marshaller),
             .alloc = alloc,
         };
-        result.thread = std.Thread.spawn(
+        result.thread = try std.Thread.spawn(
             .{},
             result.handle_events,
             .{&result},
@@ -129,14 +129,14 @@ pub const Scribe = struct {
     pub fn alloc_init(alloc: std.mem.Allocator, writer: ScribeWriter) !*Scribe {
         var result = try alloc.create(Scribe);
         const marshaller = fun.EventMarshaller{
-            .marshal = &edit_marshal,
-            .unmarshal = &edit_unmarshal,
-            .size = &edit_size,
+            .marshal = edit_marshal,
+            .unmarshal = edit_unmarshal,
+            .size = edit_size,
         };
         result.writer = writer;
-        result.fun = fun.Funnel.init(alloc, marshaller);
+        result.fun = try fun.Funnel.init(alloc, marshaller);
         result.alloc = alloc;
-        result.thread = std.Thread.spawn(
+        result.thread = try std.Thread.spawn(
             .{},
             result.handle_events,
             .{&result},
@@ -145,29 +145,33 @@ pub const Scribe = struct {
     }
 
     /// Apply incoming edit operations to the internal scribe writer.
-    fn apply_change(self: *Scribe, e: Edit) ScribeErrors!void {
+    pub fn apply_change(self: *Scribe, e: Edit) ScribeErrors!void {
         if (self.closed) return ScribeErrors.closed;
         switch (e.event) {
             EditEvent.ADD => {
-                if (self.writer.write_at(
-                    self.writer.ptr,
-                    e.character,
-                    e.row,
-                    e.col,
-                ) == 0) {
-                    std.debug.print("adding event failed to write.\n");
+                if (self.writer.write_at) |write_fn| {
+                    if (write_fn(
+                        self.writer.ptr,
+                        e.character,
+                        e.row,
+                        e.col,
+                    ) == 0) {
+                        std.debug.print("adding event failed to write.\n");
+                    }
                 }
             },
             EditEvent.DELETE => {
-                if (self.writer.delete_at(self.writer.ptr, e.row, e.col) == 0) {
-                    std.debug.print("deleting event failed to write.\n");
+                if (self.writer.delete_at) |delete_fn| {
+                    if (delete_fn(self.writer.ptr, e.row, e.col) == 0) {
+                        std.debug.print("deleting event failed to write.\n");
+                    }
                 }
             },
         }
     }
 
     /// Handle reading edit operations from the funnel structure.
-    fn handle_events(s: *Scribe) void {
+    pub fn handle_events(s: *Scribe) void {
         const funnel_handler = struct {
             fn cb(ptr: *anyopaque) void {
                 const event: *Edit = @alignCast(@ptrCast(ptr));
@@ -219,7 +223,7 @@ pub const Scribe = struct {
 
 /// Scribe structure for C ABI.
 pub const scribe_t = extern struct {
-    __internal: *anyopaque,
+    __internal: ?*anyopaque,
 };
 
 /// Initialize a scribe for the C ABI.
