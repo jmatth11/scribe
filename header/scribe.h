@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <sys/cdefs.h>
 
 __BEGIN_DECLS
@@ -76,7 +77,7 @@ struct Scribe_t {
  * @param[in] The writer for the scribe.
  * @return True for success, false otherwise.
  */
-bool scribe_init(Scribe_t *s, ScribeWriter writer) __THROWNL __nonnull((1));
+bool scribe_init(struct Scribe_t *s, struct ScribeWriter writer) __THROWNL __nonnull((1));
 /**
  * Write an event to the scribe.
  *
@@ -85,13 +86,13 @@ bool scribe_init(Scribe_t *s, ScribeWriter writer) __THROWNL __nonnull((1));
  * @return SCRIBE_SUCCESS on success, SCRIBE_CLOSED if the scribe was closed,
  *  or SCRIBE_ERROR for any errors.
  */
-enum ScribeErrors scribe_write(Scribe_t *s, Edit e) __THROWNL __nonnull((1));
+enum ScribeErrors scribe_write(struct Scribe_t *s, struct Edit e) __THROWNL __nonnull((1));
 /**
  * Initialize scribe internals.
  *
  * @param[in/out] The scribe structure.
  */
-void scribe_free(Scribe_t *s) __THROWNL __nonnull((1));
+void scribe_free(struct Scribe_t *s) __THROWNL __nonnull((1));
 
 __END_DECLS
 

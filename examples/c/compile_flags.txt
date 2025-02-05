@@ -1,0 +1,7 @@
+-I../../header/
+-L../../zig-out/lib/
+-O2
+-Wall
+-Wextra
+-lscribe
+
