@@ -12,6 +12,8 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(lib);
+    lib.linkLibC();
+    lib.bundle_compiler_rt = true;
 
     const funnel_lib = b.dependency("funnel", .{
         .target = target,
