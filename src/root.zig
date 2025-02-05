@@ -55,7 +55,8 @@ export fn edit_marshal(e: *anyopaque, buf: [*]u8, len: usize) c_int {
 }
 
 /// Unmarshaller for the Edit structure.
-export fn edit_unmarshal(buf: [*]const u8) ?*anyopaque {
+export fn edit_unmarshal(buf: [*]const u8, len: usize) ?*anyopaque {
+    if (len < edit_size()) return null;
     var result = std.heap.c_allocator.create(Edit) catch {
         return null;
     };
@@ -119,7 +120,7 @@ pub const Scribe = struct {
         };
         result.thread = try std.Thread.spawn(
             .{},
-            result.handle_events,
+            Scribe.handle_events,
             .{&result},
         );
         return result;
@@ -138,8 +139,8 @@ pub const Scribe = struct {
         result.alloc = alloc;
         result.thread = try std.Thread.spawn(
             .{},
-            result.handle_events,
-            .{&result},
+            Scribe.handle_events,
+            .{result},
         );
         return result;
     }
@@ -156,14 +157,14 @@ pub const Scribe = struct {
                         e.row,
                         e.col,
                     ) == 0) {
-                        std.debug.print("adding event failed to write.\n");
+                        std.debug.print("adding event failed to write.\n", .{});
                     }
                 }
             },
             EditEvent.DELETE => {
                 if (self.writer.delete_at) |delete_fn| {
                     if (delete_fn(self.writer.ptr, e.row, e.col) == 0) {
-                        std.debug.print("deleting event failed to write.\n");
+                        std.debug.print("deleting event failed to write.\n", .{});
                     }
                 }
             },
@@ -173,14 +174,16 @@ pub const Scribe = struct {
     /// Handle reading edit operations from the funnel structure.
     pub fn handle_events(s: *Scribe) void {
         const funnel_handler = struct {
-            fn cb(ptr: *anyopaque) void {
+            fn cb(ptr: *anyopaque, context: *anyopaque) callconv(.C) void {
+                const local_scribe: *Scribe = @alignCast(@ptrCast(context));
                 const event: *Edit = @alignCast(@ptrCast(ptr));
-                s.apply_change(event.*);
-                s.alloc.destroy(event);
+                // TODO maybe change funnel lib to allow returning of error here
+                local_scribe.apply_change(event.*) catch {};
+                local_scribe.alloc.destroy(event);
             }
         };
         while (!s.closed) {
-            _ = s.fun.read(funnel_handler.cb) catch |err| {
+            _ = s.fun.read(funnel_handler.cb, s) catch |err| {
                 if (err != fun.funnel_errors.would_block) {
                     std.debug.print("error: {}\n", .{err});
                 }
@@ -191,22 +194,24 @@ pub const Scribe = struct {
     }
 
     /// Write an Edit operation to the scribe.
-    pub fn write(self: *Scribe, event: Edit) ScribeErrors!void {
+    pub fn write(self: *Scribe, event: Edit) !void {
         if (self.closed) return ScribeErrors.closed;
-        var len: usize = 0;
+        var len: isize = 0;
         var retries: usize = 0;
         while (len == 0) {
             if (retries > 3) {
                 std.debug.print("scribe retry exceeded 3 times.\n", .{});
             }
             const e: fun.Event = .{
-                .payload = &event,
+                .payload = @constCast(&event),
             };
-            len = self.fun.write(e) catch |err| {
+            if (self.fun.write(e)) |val| {
+                len = val;
+            } else |err| {
                 if (err != fun.funnel_errors.would_block) {
-                    std.debug.print("error: {}\n", .{err});
+                    return err;
                 }
-            };
+            }
             retries += 1;
             // TODO maybe there's a more efficient way to spin
             std.time.sleep(std.time.ns_per_us * 200);
