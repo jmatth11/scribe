@@ -6,14 +6,14 @@
 #include <unistd.h>
 #include "scribe.h"
 
-#define LIMIT 40
+#define LIMIT 41
 
 struct writer_t {
   char buffer[LIMIT];
 };
 
 int writer_at(void* ctx, uint32_t c, size_t row, size_t col) {
-  const size_t index = row * col;
+  const size_t index = (row*10) + col;
   if (index >= LIMIT) return 0;
   struct writer_t* w = (struct writer_t*)ctx;
   w->buffer[index] = c;
@@ -21,7 +21,7 @@ int writer_at(void* ctx, uint32_t c, size_t row, size_t col) {
 }
 
 int deleter_at(void *ctx, size_t row, size_t col) {
-  const size_t index = row * col;
+  const size_t index = (row*10) + col;
   if (index >= LIMIT) return 0;
   struct writer_t* w = (struct writer_t*)ctx;
   w->buffer[index] = 0;
@@ -37,25 +37,26 @@ struct number_state {
 void* add_numbers(void* ctx) {
   struct number_state *state = (struct number_state*)ctx;
   const size_t start_index = state->start_index;
-  for (size_t i = start_index; i < (start_index + 10); ++i) {
+  size_t count = 1;
+  for (size_t i = start_index; i < (start_index + 10); ++i, ++count) {
     struct Edit e = {
       .row = start_index,
-      .col = 1,
+      .col = count,
       .event = SCRIBE_ADD,
       .character = state->character,
     };
+    const size_t index = (e.row*10)+e.col;
+    if (index >= LIMIT) continue;
     if (scribe_write(state->scribe, e) != SCRIBE_SUCCESS) {
       printf("writer encountered a problem when writing\n");
       break;
     }
-    // sleep 1 second
     sleep(1);
   }
   return NULL;
 }
 
-
-int main (int argc, char**argv) {
+int main () {
   struct Scribe_t scribe;
   struct writer_t buffer;
   struct ScribeWriter writer = {
@@ -83,7 +84,7 @@ int main (int argc, char**argv) {
   pthread_join(th1, NULL);
   pthread_join(th2, NULL);
 
-  for (int i = 0; i < LIMIT; ++i) {
+  for (int i = 1; i < LIMIT; ++i) {
     printf("%c", (char)buffer.buffer[i]);
     if ((i % 10) == 0) {
       printf("\n");

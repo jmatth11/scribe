@@ -5,6 +5,7 @@ const fun = @import("funnel");
 pub const ScribeErrors = error{
     /// The scribe has been closed.
     closed,
+    infinite_retry,
 };
 
 /// Scribe errors for C API.
@@ -40,17 +41,21 @@ pub const Edit = extern struct {
 /// Marshaller for the Edit structure.
 export fn edit_marshal(e: *anyopaque, buf: [*]u8, len: usize) c_int {
     const edit_local: *Edit = @alignCast(@ptrCast(e));
+    var local_buf = buf[0..len];
     const buf_size = edit_size();
     if (len < buf_size) return 0;
     var offset: usize = 0;
-    buf[offset] = @intFromEnum(edit_local.event);
+    local_buf[offset] = @intFromEnum(edit_local.event);
     offset += 1;
-    std.mem.writePackedInt(usize, buf[offset..@sizeOf(usize)], 0, edit_local.row, std.builtin.Endian.little);
+    std.mem.writePackedInt(usize, local_buf[offset..], 0, edit_local.row, std.builtin.Endian.little);
     offset += @sizeOf(usize);
-    std.mem.writePackedInt(usize, buf[offset..@sizeOf(usize)], 0, edit_local.col, std.builtin.Endian.little);
+    std.mem.writePackedInt(usize, local_buf[offset..], 0, edit_local.col, std.builtin.Endian.little);
     offset += @sizeOf(usize);
-    std.mem.writePackedInt(u32, buf[offset..@sizeOf(u32)], 0, edit_local.character, std.builtin.Endian.little);
+    std.mem.writePackedInt(u32, local_buf[offset..], 0, edit_local.character, std.builtin.Endian.little);
     offset += @sizeOf(u32);
+    for (local_buf, 0..) |val, i| {
+        buf[i] = val;
+    }
     return @intCast(offset);
 }
 
@@ -60,14 +65,15 @@ export fn edit_unmarshal(buf: [*]const u8, len: usize) ?*anyopaque {
     var result = std.heap.c_allocator.create(Edit) catch {
         return null;
     };
+    const local_buf = buf[0..len];
     var offset: usize = 0;
-    result.event = @enumFromInt(buf[offset]);
+    result.event = @enumFromInt(local_buf[offset]);
     offset += 1;
-    result.row = std.mem.readPackedInt(usize, buf[offset..@sizeOf(usize)], offset, std.builtin.Endian.little);
+    result.row = std.mem.readPackedInt(usize, local_buf[offset..], 0, std.builtin.Endian.little);
     offset += @sizeOf(usize);
-    result.col = std.mem.readPackedInt(usize, buf[offset..@sizeOf(usize)], offset, std.builtin.Endian.little);
+    result.col = std.mem.readPackedInt(usize, local_buf[offset..], 0, std.builtin.Endian.little);
     offset += @sizeOf(usize);
-    result.character = std.mem.readPackedInt(u32, buf[offset..@sizeOf(u32)], offset, std.builtin.Endian.little);
+    result.character = std.mem.readPackedInt(u32, local_buf[offset..], 0, std.builtin.Endian.little);
     return result;
 }
 
@@ -97,14 +103,15 @@ pub const Scribe = struct {
     writer: ScribeWriter = undefined,
     /// thread for read operations.
     thread: std.Thread = undefined,
-    //mutex: std.Thread.Mutex = undefined,
-    //condition: std.Thread.Condition = undefined,
+    mutex: std.Thread.Mutex = std.Thread.Mutex{},
+    condition: std.Thread.Condition = std.Thread.Condition{},
     /// Funnel structure to pipe writes from multiple locations to a single read point.
     fun: fun.Funnel = undefined,
     /// allocator
     alloc: std.mem.Allocator = undefined,
     /// flag to signal the scribe is closed or not.
     closed: bool = false,
+    pending: std.atomic.Value(u32) = 0,
 
     /// Initialize a scribe with a given writer.
     pub fn init(alloc: std.mem.Allocator, writer: ScribeWriter) !Scribe {
@@ -183,13 +190,20 @@ pub const Scribe = struct {
             }
         };
         while (!s.closed) {
-            _ = s.fun.read(funnel_handler.cb, s) catch |err| {
-                if (err != fun.funnel_errors.would_block) {
-                    std.debug.print("error: {}\n", .{err});
-                }
-            };
-            // TODO maybe change to using a conditional block here?
-            std.time.sleep(std.time.ns_per_us * 200);
+            if (s.pending.load(.monotonic) != 0) {
+                _ = s.pending.fetchSub(1, .monotonic);
+                _ = s.fun.read(funnel_handler.cb, s) catch |err| {
+                    if (err != fun.funnel_errors.would_block) {
+                        std.debug.print("error: {}\n", .{err});
+                    }
+                };
+            }
+            if (s.pending.load(.monotonic) == 0) {
+                //s.condition.timedWait(&s.mutex, std.time.ns_per_s * 10) catch |err| {
+                //    std.debug.print("condition wait failed: {}\n", .{err});
+                //};
+                s.condition.wait(&s.mutex);
+            }
         }
     }
 
@@ -199,9 +213,9 @@ pub const Scribe = struct {
         var len: isize = 0;
         var retries: usize = 0;
         while (len == 0) {
-            if (retries > 3) {
-                std.debug.print("scribe retry exceeded 3 times.\n", .{});
-            }
+            //if (retries > 10) {
+            //    return ScribeErrors.infinite_retry;
+            //}
             const e: fun.Event = .{
                 .payload = @constCast(&event),
             };
@@ -216,6 +230,8 @@ pub const Scribe = struct {
             // TODO maybe there's a more efficient way to spin
             std.time.sleep(std.time.ns_per_us * 200);
         }
+        _ = self.pending.fetchAdd(1, .monotonic);
+        self.condition.signal();
     }
 
     /// Deinitialize internals and toggle closed flag to true.
