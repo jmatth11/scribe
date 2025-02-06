@@ -105,12 +105,15 @@ pub const Scribe = struct {
     writer: ScribeWriter = undefined,
     /// thread for read operations.
     thread: std.Thread = undefined,
+    mutex: std.Thread.Mutex = std.Thread.Mutex{},
+    condition: std.Thread.Condition = std.Thread.Condition{},
     /// Funnel structure to pipe writes from multiple locations to a single read point.
     fun: fun.Funnel = undefined,
     /// allocator
     alloc: std.mem.Allocator = undefined,
     /// flag to signal the scribe is closed or not.
     closed: bool = false,
+    pending: std.atomic.Value(u32) = undefined,
 
     /// Initialize a scribe with a given writer.
     pub fn init(alloc: std.mem.Allocator, writer: ScribeWriter) !Scribe {
@@ -123,6 +126,7 @@ pub const Scribe = struct {
             .writer = writer,
             .fun = try fun.Funnel.init(alloc, marshaller, false),
             .alloc = alloc,
+            .pending = std.atomic.Value(u32).init(0),
         };
         result.thread = try std.Thread.spawn(
             .{},
@@ -143,6 +147,7 @@ pub const Scribe = struct {
         result.writer = writer;
         result.fun = try fun.Funnel.init(alloc, marshaller, false);
         result.alloc = alloc;
+        result.pending = std.atomic.Value(u32).init(0);
         result.thread = try std.Thread.spawn(
             .{},
             Scribe.handle_events,
@@ -188,13 +193,20 @@ pub const Scribe = struct {
                 local_scribe.alloc.destroy(event);
             }
         };
+        s.mutex.lock();
+        defer s.mutex.unlock();
         while (!s.closed) {
-            _ = s.fun.read(funnel_handler.cb, s) catch |err| {
-                // since I change to blocking calls I may not need this anymore
-                if (err != fun.funnel_errors.would_block) {
-                    std.debug.print("error: {}\n", .{err});
-                }
-            };
+            if (s.pending.load(.monotonic) > 0) {
+                _ = s.pending.fetchSub(1, .release);
+                _ = s.fun.read(funnel_handler.cb, s) catch |err| {
+                    if (err != fun.funnel_errors.would_block) {
+                        std.debug.print("error: {}\n", .{err});
+                    }
+                };
+            }
+            if (s.pending.load(.monotonic) == 0) {
+                s.condition.wait(&s.mutex);
+            }
         }
     }
 
@@ -213,11 +225,14 @@ pub const Scribe = struct {
                 return err;
             }
         }
+        _ = self.pending.fetchAdd(1, .acquire);
+        self.condition.signal();
     }
 
     /// Deinitialize internals and toggle closed flag to true.
     pub fn deinit(self: *Scribe) void {
         self.closed = true;
+        self.condition.signal();
         self.thread.join();
         self.fun.deinit();
     }
