@@ -1,5 +1,6 @@
 -I../../header/
 -L../../zig-out/lib/
+-std=c11
 -O2
 -Wall
 -Wextra

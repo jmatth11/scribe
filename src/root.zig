@@ -5,17 +5,19 @@ const fun = @import("funnel");
 pub const ScribeErrors = error{
     /// The scribe has been closed.
     closed,
-    infinite_retry,
+    would_block,
 };
 
 /// Scribe errors for C API.
 pub const ScribeErrorsEnum = enum(c_int) {
     /// Success.
-    SCRIBE_SUCCESS,
+    SCRIBE_SUCCESS = 0,
     /// Scribe was closed.
     SCRIBE_CLOSED,
     /// Generic Error.
     SCRIBE_ERROR,
+    /// Action would block
+    SCRIBE_WOULD_BLOCK,
 };
 
 /// Edit event operations.
@@ -103,15 +105,12 @@ pub const Scribe = struct {
     writer: ScribeWriter = undefined,
     /// thread for read operations.
     thread: std.Thread = undefined,
-    mutex: std.Thread.Mutex = std.Thread.Mutex{},
-    condition: std.Thread.Condition = std.Thread.Condition{},
     /// Funnel structure to pipe writes from multiple locations to a single read point.
     fun: fun.Funnel = undefined,
     /// allocator
     alloc: std.mem.Allocator = undefined,
     /// flag to signal the scribe is closed or not.
     closed: bool = false,
-    pending: std.atomic.Value(u32) = 0,
 
     /// Initialize a scribe with a given writer.
     pub fn init(alloc: std.mem.Allocator, writer: ScribeWriter) !Scribe {
@@ -122,7 +121,7 @@ pub const Scribe = struct {
         };
         const result = Scribe{
             .writer = writer,
-            .fun = try fun.Funnel.init(alloc, marshaller),
+            .fun = try fun.Funnel.init(alloc, marshaller, false),
             .alloc = alloc,
         };
         result.thread = try std.Thread.spawn(
@@ -142,7 +141,7 @@ pub const Scribe = struct {
             .size = edit_size,
         };
         result.writer = writer;
-        result.fun = try fun.Funnel.init(alloc, marshaller);
+        result.fun = try fun.Funnel.init(alloc, marshaller, false);
         result.alloc = alloc;
         result.thread = try std.Thread.spawn(
             .{},
@@ -190,20 +189,12 @@ pub const Scribe = struct {
             }
         };
         while (!s.closed) {
-            if (s.pending.load(.monotonic) != 0) {
-                _ = s.pending.fetchSub(1, .monotonic);
-                _ = s.fun.read(funnel_handler.cb, s) catch |err| {
-                    if (err != fun.funnel_errors.would_block) {
-                        std.debug.print("error: {}\n", .{err});
-                    }
-                };
-            }
-            if (s.pending.load(.monotonic) == 0) {
-                //s.condition.timedWait(&s.mutex, std.time.ns_per_s * 10) catch |err| {
-                //    std.debug.print("condition wait failed: {}\n", .{err});
-                //};
-                s.condition.wait(&s.mutex);
-            }
+            _ = s.fun.read(funnel_handler.cb, s) catch |err| {
+                // since I change to blocking calls I may not need this anymore
+                if (err != fun.funnel_errors.would_block) {
+                    std.debug.print("error: {}\n", .{err});
+                }
+            };
         }
     }
 
@@ -211,27 +202,17 @@ pub const Scribe = struct {
     pub fn write(self: *Scribe, event: Edit) !void {
         if (self.closed) return ScribeErrors.closed;
         var len: isize = 0;
-        var retries: usize = 0;
-        while (len == 0) {
-            //if (retries > 10) {
-            //    return ScribeErrors.infinite_retry;
-            //}
-            const e: fun.Event = .{
-                .payload = @constCast(&event),
-            };
-            if (self.fun.write(e)) |val| {
-                len = val;
-            } else |err| {
-                if (err != fun.funnel_errors.would_block) {
-                    return err;
-                }
+        const e: fun.Event = .{
+            .payload = @constCast(&event),
+        };
+        if (self.fun.write(e)) |val| {
+            len = val;
+        } else |err| {
+            // since I change to blocking calls I may not need this anymore
+            if (err != fun.funnel_errors.would_block) {
+                return err;
             }
-            retries += 1;
-            // TODO maybe there's a more efficient way to spin
-            std.time.sleep(std.time.ns_per_us * 200);
         }
-        _ = self.pending.fetchAdd(1, .monotonic);
-        self.condition.signal();
     }
 
     /// Deinitialize internals and toggle closed flag to true.
@@ -262,6 +243,8 @@ export fn scribe_write(s: *scribe_t, e: Edit) ScribeErrorsEnum {
     local.write(e) catch |err| {
         if (err == ScribeErrors.closed) {
             return ScribeErrorsEnum.SCRIBE_CLOSED;
+        } else if (err == ScribeErrors.would_block) {
+            return ScribeErrorsEnum.SCRIBE_WOULD_BLOCK;
         }
         return ScribeErrorsEnum.SCRIBE_ERROR;
     };

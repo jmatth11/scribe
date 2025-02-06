@@ -1,12 +1,21 @@
+#include <assert.h>
 #include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include "scribe.h"
 
 #define LIMIT 41
+
+char expected[LIMIT] = {
+  0,0,0,0,0,0,0,0,0,0,0,
+  'A','A','A','A','A','A','A','A','A','A',
+  0,0,0,0,0,0,0,0,0,0,
+  'B','B','B','B','B','B','B','B','B','B',
+};
 
 struct writer_t {
   char buffer[LIMIT];
@@ -51,7 +60,6 @@ void* add_numbers(void* ctx) {
       printf("writer encountered a problem when writing\n");
       break;
     }
-    sleep(1);
   }
   return NULL;
 }
@@ -59,6 +67,7 @@ void* add_numbers(void* ctx) {
 int main () {
   struct Scribe_t scribe;
   struct writer_t buffer;
+  memset(&buffer, 0, sizeof(buffer));
   struct ScribeWriter writer = {
     .ptr = &buffer,
     .write_at = writer_at,
@@ -85,7 +94,8 @@ int main () {
   pthread_join(th2, NULL);
 
   for (int i = 1; i < LIMIT; ++i) {
-    printf("%c", (char)buffer.buffer[i]);
+    printf("%c,", (char)buffer.buffer[i]);
+    assert(buffer.buffer[i] == expected[i]);
     if ((i % 10) == 0) {
       printf("\n");
     }

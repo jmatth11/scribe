@@ -24,8 +24,8 @@
     // internet connectivity.
     .dependencies = .{
         .funnel = .{
-            .url = "git+https://github.com/jmatth11/funnel?ref=main#bceeb5242f6cb34b84d409c93479ec182f79f9dd",
-            .hash = "12204030e6881c353385fc6cd1d4e282510dffb47a17aa6b3e3e5b97f9656fb012fc",
+            .url = "git+https://github.com/jmatth11/funnel?ref=main#416c77b8a939e0213e4221664de990c6cf65fe42",
+            .hash = "122076498f19a33b6246c3189443b12924f2c63c064957383a8d7ab530d7be3e39a2",
         },
     },
     .paths = .{
