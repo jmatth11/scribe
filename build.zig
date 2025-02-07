@@ -20,16 +20,16 @@ pub fn build(b: *std.Build) void {
 
     const funnel_lib = b.dependency("funnel", .{
         .target = target,
-        .optimize = optimize,
     });
 
     lib.root_module.addImport("funnel", funnel_lib.module("funnel"));
 
-    _ = b.addModule("scribe", .{
+    var mod = b.addModule("scribe", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
+    mod.addImport("funnel", funnel_lib.module("funnel"));
 
     const lib_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/root.zig"),
