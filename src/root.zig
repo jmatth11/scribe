@@ -5,6 +5,7 @@ const fun = @import("funnel");
 pub const ScribeErrors = error{
     /// The scribe has been closed.
     closed,
+    /// Action would have resulted in a block.
     would_block,
 };
 
@@ -105,7 +106,9 @@ pub const Scribe = struct {
     writer: ScribeWriter = undefined,
     /// thread for read operations.
     thread: std.Thread = undefined,
+    /// Mutex for the read loop.
     mutex: std.Thread.Mutex = std.Thread.Mutex{},
+    /// Condition for the read loop to queue off of to know when updates have happened.
     condition: std.Thread.Condition = std.Thread.Condition{},
     /// Funnel structure to pipe writes from multiple locations to a single read point.
     fun: fun.Funnel = undefined,
@@ -113,6 +116,7 @@ pub const Scribe = struct {
     alloc: std.mem.Allocator = undefined,
     /// flag to signal the scribe is closed or not.
     closed: bool = false,
+    /// Atomic value to keep track of pending operations.
     pending: std.atomic.Value(u32) = undefined,
 
     /// Initialize a scribe with a given writer.
@@ -126,7 +130,10 @@ pub const Scribe = struct {
             .writer = writer,
             .fun = try fun.Funnel.init(alloc, marshaller, false),
             .alloc = alloc,
+            .closed = false,
             .pending = std.atomic.Value(u32).init(0),
+            .mutex = std.Thread.Mutex{},
+            .condition = std.Thread.Condition{},
         };
         result.thread = try std.Thread.spawn(
             .{},
@@ -137,7 +144,7 @@ pub const Scribe = struct {
     }
 
     /// Initialize an allocated scribe with a given writer.
-    pub fn alloc_init(alloc: std.mem.Allocator, writer: ScribeWriter) !*Scribe {
+    pub fn create(alloc: std.mem.Allocator, writer: ScribeWriter) !*Scribe {
         var result = try alloc.create(Scribe);
         const marshaller = fun.EventMarshaller{
             .marshal = edit_marshal,
@@ -148,6 +155,9 @@ pub const Scribe = struct {
         result.fun = try fun.Funnel.init(alloc, marshaller, false);
         result.alloc = alloc;
         result.pending = std.atomic.Value(u32).init(0);
+        result.closed = false;
+        result.mutex = std.Thread.Mutex{};
+        result.condition = std.Thread.Condition{};
         result.thread = try std.Thread.spawn(
             .{},
             Scribe.handle_events,
@@ -199,9 +209,7 @@ pub const Scribe = struct {
             if (s.pending.load(.monotonic) > 0) {
                 _ = s.pending.fetchSub(1, .release);
                 _ = s.fun.read(funnel_handler.cb, s) catch |err| {
-                    if (err != fun.funnel_errors.would_block) {
-                        std.debug.print("error: {}\n", .{err});
-                    }
+                    std.debug.print("error: {}\n", .{err});
                 };
             }
             if (s.pending.load(.monotonic) == 0) {
@@ -220,10 +228,7 @@ pub const Scribe = struct {
         if (self.fun.write(e)) |val| {
             len = val;
         } else |err| {
-            // since I change to blocking calls I may not need this anymore
-            if (err != fun.funnel_errors.would_block) {
-                return err;
-            }
+            return err;
         }
         _ = self.pending.fetchAdd(1, .acquire);
         self.condition.signal();
@@ -245,7 +250,7 @@ pub const scribe_t = extern struct {
 
 /// Initialize a scribe for the C ABI.
 export fn scribe_init(s: *scribe_t, writer: ScribeWriter) bool {
-    const result = Scribe.alloc_init(std.heap.c_allocator, writer) catch {
+    const result = Scribe.create(std.heap.c_allocator, writer) catch {
         return false;
     };
     s.__internal = result;
