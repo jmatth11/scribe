@@ -14,16 +14,16 @@
 // Expected buffer to assert against.
 char expected_addition[LIMIT] = {
   0,0,0,0,0,0,0,0,0,0,0,
-  'A','A','A','A','A','A','A','A','A','A',
+  'B','C','D','E','F','G','H','I','J','K',
   0,0,0,0,0,0,0,0,0,0,
-  'B','B','B','B','B','B','B','B','B','B',
+  'C','D','E','F','G','H','I','J','K','L',
 };
 // Expected buffer to assert against.
 char expected_deletion[LIMIT] = {
   0,0,0,0,0,0,0,0,0,0,0,
-  'A','A','A',0,0,'A','A','A','A','A',
+  'B','C','D',0,0,'G','H','I','J','K',
   0,0,0,0,0,0,0,0,0,0,
-  'B','B','B',0,0,'B','B','B','B','B',
+  'C','D','E',0,0,'H','I','J','K','L',
 };
 
 /**
@@ -78,7 +78,7 @@ void* add_numbers(void* ctx) {
       .row = start_index,
       .col = count,
       .event = SCRIBE_ADD,
-      .character = state->character,
+      .character = state->character + count,
     };
     // calculate index
     const size_t index = (e.row*10)+e.col;
