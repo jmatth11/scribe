@@ -44,12 +44,22 @@ struct Edit {
 
 /**
  * Scribe writer write at function.
+ *
+ * @param[in] ptr The pointed object you attach to the ScribeWriter.
+ * @param[in] c The character.
+ * @param[in] row The row index.
+ * @param[in] col The col index.
+ * @return The number of bytes written, 0 for error or none.
  */
-typedef int(*scribe_write_at_fn)(void*, uint32_t, size_t, size_t);
+typedef int(*scribe_write_at_fn)(void* ptr, uint32_t c, size_t row, size_t col);
 /**
  * Scribe writer delete at function.
+ * @param[in] ptr The pointed object you attach to the ScribeWriter.
+ * @param[in] row The row index.
+ * @param[in] col The col index.
+ * @return The number of bytes deleted, 0 for error or none.
  */
-typedef int(*scribe_delete_at_fn)(void*, size_t, size_t);
+typedef int(*scribe_delete_at_fn)(void* ptr, size_t row, size_t col);
 
 /**
  * ScribeWriter interface for the Scribe to push events to.

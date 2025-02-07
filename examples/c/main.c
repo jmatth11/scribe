@@ -185,7 +185,6 @@ int main () {
   // print out and assert result
   for (int i = 1; i < LIMIT; ++i) {
     printf("%c,", (char)buffer.buffer[i]);
-    fflush(stdout);
     assert(buffer.buffer[i] == expected_deletion[i]);
     if ((i % 10) == 0) {
       printf("\n");
