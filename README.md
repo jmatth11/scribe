@@ -31,6 +31,8 @@ A C header file is included. You can check out `examples` for working examples
 used in the C interface, but here is a simple example only using the ADD operation.
 
 ```c
+#define LIMIT 41
+
 /**
  * Writer structure to hold our character buffer.
  */
