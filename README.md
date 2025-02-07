@@ -6,6 +6,24 @@ This library is meant for text files or text buffers but could be applied to oth
 
 `pipe2` is used to deliver the messages between writers and readers.
 
+## Installation
+
+Fetch with zig.
+
+```bash
+zig fetch --save git+https://github.com/jmatth11/scribe#main
+```
+
+Add to your `build.zig`
+
+```zig
+const funnel_lib = b.dependency("scribe", .{
+    .target = target,
+    .optimize = optimize,
+});
+
+lib.root_module.addImport("scribe", funnel_lib.module("scribe"));
+```
 
 ## C Usage
 
