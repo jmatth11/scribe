@@ -17,11 +17,11 @@ zig fetch --save git+https://github.com/jmatth11/scribe#main
 Add to your `build.zig`
 
 ```zig
-const funnel_lib = b.dependency("scribe", .{
+const scribe_lib = b.dependency("scribe", .{
     .target = target,
 });
 
-lib.root_module.addImport("scribe", funnel_lib.module("scribe"));
+lib.root_module.addImport("scribe", scribe_lib.module("scribe"));
 ```
 
 ## C Usage
