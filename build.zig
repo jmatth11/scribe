@@ -36,6 +36,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    lib_unit_tests.linkLibC();
+    lib_unit_tests.root_module.addImport("funnel", funnel_lib.module("funnel"));
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
