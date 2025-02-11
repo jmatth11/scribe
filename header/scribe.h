@@ -32,6 +32,8 @@ enum ScribeErrors {
  * An edit operation.
  */
 struct Edit {
+  /* ID for edit operation. */
+  size_t id;
   /* Edit operation. */
   enum EditEvent event;
   /* Row location. */
@@ -40,26 +42,25 @@ struct Edit {
   size_t col;
   /* Character (If ADD operation). */
   uint32_t character;
+  /* Timestamp of edit operation. */
+  long timestamp;
 };
 
 /**
  * Scribe writer write at function.
  *
  * @param[in] ptr The pointed object you attach to the ScribeWriter.
- * @param[in] c The character.
- * @param[in] row The row index.
- * @param[in] col The col index.
+ * @param[in] e The edit operation.
  * @return The number of bytes written, 0 for error or none.
  */
-typedef int(*scribe_write_at_fn)(void* ptr, uint32_t c, size_t row, size_t col);
+typedef int(*scribe_write_at_fn)(void* ptr, struct Edit e);
 /**
  * Scribe writer delete at function.
  * @param[in] ptr The pointed object you attach to the ScribeWriter.
- * @param[in] row The row index.
- * @param[in] col The col index.
+ * @param[in] e The edit operation.
  * @return The number of bytes deleted, 0 for error or none.
  */
-typedef int(*scribe_delete_at_fn)(void* ptr, size_t row, size_t col);
+typedef int(*scribe_delete_at_fn)(void* ptr, struct Edit e);
 
 /**
  * ScribeWriter interface for the Scribe to push events to.

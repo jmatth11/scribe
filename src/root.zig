@@ -31,6 +31,8 @@ pub const EditEvent = enum(u8) {
 
 /// Edit information for an edit operation.
 pub const Edit = extern struct {
+    /// The ID of the edit operation.
+    id: usize,
     /// The edit operation.
     event: EditEvent,
     /// The row location.
@@ -39,6 +41,8 @@ pub const Edit = extern struct {
     col: usize,
     /// The character (If ADD operation).
     character: u32,
+    /// The timestamp of the edit operation.
+    timestamp: usize,
 };
 
 /// Marshaller for the Edit structure.
@@ -48,6 +52,8 @@ export fn edit_marshal(e: *anyopaque, buf: [*]u8, len: usize) c_int {
     const buf_size = edit_size();
     if (len < buf_size) return 0;
     var offset: usize = 0;
+    std.mem.writePackedInt(usize, local_buf[offset..], 0, edit_local.id, std.builtin.Endian.little);
+    offset += @sizeOf(usize);
     local_buf[offset] = @intFromEnum(edit_local.event);
     offset += 1;
     std.mem.writePackedInt(usize, local_buf[offset..], 0, edit_local.row, std.builtin.Endian.little);
@@ -56,6 +62,8 @@ export fn edit_marshal(e: *anyopaque, buf: [*]u8, len: usize) c_int {
     offset += @sizeOf(usize);
     std.mem.writePackedInt(u32, local_buf[offset..], 0, edit_local.character, std.builtin.Endian.little);
     offset += @sizeOf(u32);
+    std.mem.writePackedInt(usize, local_buf[offset..], 0, edit_local.timestamp, std.builtin.Endian.little);
+    offset += @sizeOf(usize);
     for (local_buf, 0..) |val, i| {
         buf[i] = val;
     }
@@ -70,6 +78,8 @@ export fn edit_unmarshal(buf: [*]const u8, len: usize) ?*anyopaque {
     };
     const local_buf = buf[0..len];
     var offset: usize = 0;
+    result.id = std.mem.readPackedInt(usize, local_buf[offset..], 0, std.builtin.Endian.little);
+    offset += @sizeOf(usize);
     result.event = @enumFromInt(local_buf[offset]);
     offset += 1;
     result.row = std.mem.readPackedInt(usize, local_buf[offset..], 0, std.builtin.Endian.little);
@@ -77,18 +87,21 @@ export fn edit_unmarshal(buf: [*]const u8, len: usize) ?*anyopaque {
     result.col = std.mem.readPackedInt(usize, local_buf[offset..], 0, std.builtin.Endian.little);
     offset += @sizeOf(usize);
     result.character = std.mem.readPackedInt(u32, local_buf[offset..], 0, std.builtin.Endian.little);
+    offset += @sizeOf(u32);
+    result.timestamp = std.mem.readPackedInt(usize, local_buf[offset..], 0, std.builtin.Endian.little);
+    offset += @sizeOf(usize);
     return result;
 }
 
 /// Size function for the Edit structure.
 export fn edit_size() usize {
-    return (@sizeOf(usize) * 2) + @sizeOf(u32) + 1;
+    return (@sizeOf(usize) * 4) + @sizeOf(u32) + 1;
 }
 
 /// Write at function signature for a ScribeWriter.
-pub const scribe_write_at_fn = fn (?*anyopaque, u32, usize, usize) callconv(.C) c_int;
+pub const scribe_write_at_fn = fn (?*anyopaque, Edit) callconv(.C) c_int;
 /// Delete at function signature for a ScribeWriter.
-pub const scribe_delete_at_fn = fn (?*anyopaque, usize, usize) callconv(.C) c_int;
+pub const scribe_delete_at_fn = fn (?*anyopaque, Edit) callconv(.C) c_int;
 
 /// ScribeWriter interface for a Scribe to use when pushing out edit operations.
 pub const ScribeWriter = extern struct {
@@ -172,19 +185,14 @@ pub const Scribe = struct {
         switch (e.event) {
             EditEvent.ADD => {
                 if (self.writer.write_at) |write_fn| {
-                    if (write_fn(
-                        self.writer.ptr,
-                        e.character,
-                        e.row,
-                        e.col,
-                    ) == 0) {
+                    if (write_fn(self.writer.ptr, e) == 0) {
                         std.debug.print("adding event failed to write.\n", .{});
                     }
                 }
             },
             EditEvent.DELETE => {
                 if (self.writer.delete_at) |delete_fn| {
-                    if (delete_fn(self.writer.ptr, e.row, e.col) == 0) {
+                    if (delete_fn(self.writer.ptr, e) == 0) {
                         std.debug.print("deleting event failed to write.\n", .{});
                     }
                 }

@@ -5,11 +5,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include "scribe.h"
 
 // arbitrary limit
 #define LIMIT 41
+
+#define expected_add_id 1
+#define expected_delete_id 2
 
 // Expected buffer to assert against.
 char expected_addition[LIMIT] = {
@@ -26,6 +30,8 @@ char expected_deletion[LIMIT] = {
   'C','D','E',0,0,'H','I','J','K','L',
 };
 
+static long expected_time;
+
 /**
  * Writer structure to hold our character buffer.
  */
@@ -36,22 +42,26 @@ struct writer_t {
 /**
  * Define our writer function to populate our buffer for ADD commands.
  */
-int writer_at(void* ctx, uint32_t c, size_t row, size_t col) {
-  const size_t index = (row*10) + col;
+int writer_at(void* ctx, struct Edit e) {
+  const size_t index = (e.row*10) + e.col;
   if (index >= LIMIT) return 0;
   struct writer_t* w = (struct writer_t*)ctx;
-  w->buffer[index] = c;
+  w->buffer[index] = e.character;
+  assert(e.id == expected_add_id);
+  assert(e.timestamp == expected_time);
   return 1;
 }
 
 /**
  * Define our deleter function to handle deleting from our buffer for DELETE commands.
  */
-int deleter_at(void *ctx, size_t row, size_t col) {
-  const size_t index = (row*10) + col;
+int deleter_at(void *ctx, struct Edit e) {
+  const size_t index = (e.row*10) + e.col;
   if (index >= LIMIT) return 0;
   struct writer_t* w = (struct writer_t*)ctx;
   w->buffer[index] = 0;
+  assert(e.id == expected_delete_id);
+  assert(e.timestamp == expected_time);
   return 1;
 }
 
@@ -75,10 +85,12 @@ void* add_numbers(void* ctx) {
   for (size_t i = start_index; i < (start_index + 10); ++i, ++count) {
     // create an edit command
     struct Edit e = {
+      .id = expected_add_id,
       .row = start_index,
       .col = count,
       .event = SCRIBE_ADD,
       .character = state->character + count,
+      .timestamp = expected_time,
     };
     // calculate index
     const size_t index = (e.row*10)+e.col;
@@ -103,10 +115,12 @@ void* delete_numbers(void* ctx) {
   for (size_t i = start_index; i < (start_index + 2); ++i, ++count) {
     // create an edit command
     struct Edit e = {
+      .id = expected_delete_id,
       .row = start_index,
       .col = count,
       .event = SCRIBE_DELETE,
       .character = state->character,
+      .timestamp = expected_time,
     };
     // calculate index
     const size_t index = (e.row*10)+e.col;
@@ -121,6 +135,7 @@ void* delete_numbers(void* ctx) {
 }
 
 int main () {
+  expected_time = clock();
   // create scribe
   struct Scribe_t scribe;
   // create our writer buffer
