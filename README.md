@@ -42,12 +42,11 @@ struct writer_t {
 /**
  * Define our writer function to populate our buffer for ADD commands.
  */
-int writer_at(void* ctx, uint32_t c, size_t row, size_t col) {
-  const size_t index = (row*10) + col;
+int writer_at(void* ctx, struct Edit e) {
+  const size_t index = (e.row*10) + e.col;
   if (index >= LIMIT) return 0;
   struct writer_t* w = (struct writer_t*)ctx;
-  // we aren't dealing with unicode so we can assume ASCII
-  w->buffer[index] = c;
+  w->buffer[index] = e.character;
   return 1;
 }
 
@@ -70,11 +69,13 @@ void* add_numbers(void* ctx) {
   // change the next 10 entries
   for (size_t i = start_index; i < (start_index + 10); ++i, ++count) {
     // create an edit command
-    struct Edit e = {
+     struct Edit e = {
+      .id = 1,
       .row = start_index,
       .col = count,
       .event = SCRIBE_ADD,
       .character = state->character,
+      .timestamp = clock(),
     };
     // calculate index
     const size_t index = (e.row*10)+e.col;
