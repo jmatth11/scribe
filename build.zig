@@ -6,12 +6,17 @@ pub fn build(b: *std.Build) void {
         .preferred_optimize_mode = .ReleaseFast,
     });
 
-    const lib = b.addStaticLibrary(.{
-        .name = "scribe",
+    const linkage = b.option(std.builtin.LinkMode, "linkage", "Link mode for scribe library") orelse .static;
+    const rootModules = b.addModule("scribe", .{
         .root_source_file = b.path("src/root.zig"),
+        .pic = true,
         .target = target,
         .optimize = optimize,
-        .pic = true,
+    });
+    const lib = b.addLibrary(.{
+        .name = "scribe",
+        .root_module = rootModules,
+        .linkage = linkage,
     });
 
     b.installArtifact(lib);
