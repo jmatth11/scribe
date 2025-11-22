@@ -99,9 +99,9 @@ export fn edit_size() usize {
 }
 
 /// Write at function signature for a ScribeWriter.
-pub const scribe_write_at_fn = fn (?*anyopaque, Edit) callconv(.C) c_int;
+pub const scribe_write_at_fn = fn (?*anyopaque, Edit) callconv(.c) c_int;
 /// Delete at function signature for a ScribeWriter.
-pub const scribe_delete_at_fn = fn (?*anyopaque, Edit) callconv(.C) c_int;
+pub const scribe_delete_at_fn = fn (?*anyopaque, Edit) callconv(.c) c_int;
 
 /// ScribeWriter interface for a Scribe to use when pushing out edit operations.
 pub const ScribeWriter = extern struct {
@@ -203,7 +203,7 @@ pub const Scribe = struct {
     /// Handle reading edit operations from the funnel structure.
     pub fn handle_events(s: *Scribe) void {
         const funnel_handler = struct {
-            fn cb(ptr: *anyopaque, context: *anyopaque) callconv(.C) void {
+            fn cb(ptr: *anyopaque, context: *anyopaque) callconv(.c) void {
                 const local_scribe: *Scribe = @alignCast(@ptrCast(context));
                 const event: *Edit = @alignCast(@ptrCast(ptr));
                 // TODO maybe change funnel lib to allow returning of error here
