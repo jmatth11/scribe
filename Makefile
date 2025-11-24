@@ -1,6 +1,6 @@
 .PHONY: all
 all:
-	zig build
+	zig build -Doptimize=ReleaseSafe
 
 .PHONY: clean
 clean:
